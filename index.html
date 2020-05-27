@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>ICON SCORE Deployer</title>
+    <script src="http://cdn.jsdelivr.net/gh/icon-project/icon-sdk-js@latest/build/icon-sdk-js.min.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+</head>
+
+<body>
+
+    <h1>ICON SCORE Deployer</h1>
+    <p>--------------------</p>
+
+    <p><b>1. Login</b> - Click here to login:</p>
+    <button id="request-address">LOGIN</button>
+    <p id="response-address">> Selected ICX Address : </p>
+
+    <p>--------------------</p>
+    <p><b>2. Select your SCORE</b> - Select your SCORE .zip archive:</p>
+    <button id="request-score" disabled>SCORE archive</button>
+    <input id="score-file-input" accept=".zip" type="file" name="name" style="display: none;" />
+    <p id="score-filename">> SCORE filename : </p>
+
+    <p>--------------------</p>
+    <p><b>3. Deploy</b> - Send your SCORE to the network</p>
+    <input type="radio" id="mainnet" name="nid" value="1" checked> MainNet
+    <input type="radio" id="testnet" name="nid" value="3"> TestNet
+
+    <p>SCORE install/update params: </p>
+    <p><textarea id="score-params" style="width: 50%; height: 100px;">{}</textarea>
+    </p>
+    <p><button id="request-deploy" disabled>Deploy SCORE</button></p>
+    <p id="response-deploy">> Transaction Hash : </p>
+
+    <script>
+        var iconService = window['icon-sdk-js']
+        var IconWallet = iconService.IconWallet
+        var IconAmount = iconService.IconAmount
+        var IconConverter = iconService.IconConverter
+        var IconBuilder = iconService.IconBuilder
+        var walletAddress = null;
+
+        var requestAddress = document.getElementById("request-address")
+        var responseAddress = document.getElementById("response-address")
+        var scoreFilename = document.getElementById("score-filename")
+
+        var requestScore = document.getElementById("request-score")
+        var requestScoreForm = document.getElementById("request-score-form")
+        var responseScore = document.getElementById("response-score")
+
+        var requestSigning = document.getElementById("request-deploy")
+        var responseDeploy = document.getElementById("response-deploy")
+
+        var sendAddress = document.getElementById("send-address")
+        var sendAmount = document.getElementById("send-amount")
+        var scoreData = document.getElementById("score-data")
+        var scoreParams = document.getElementById("score-params")
+
+        var scoreFileInput = document.getElementById("score-file-input")
+        var scoreFileBytes = null;
+
+        requestAddress.onclick = function () {
+            iconexAskAddress().then(address => {
+                responseAddress.innerHTML = '> Selected ICX Address : <b>' + address + '</b>'
+                requestScore.disabled = false
+                walletAddress = address;
+            })
+        }
+
+        requestScore.onclick = function () {
+            document.getElementById('score-file-input').click();
+        }
+
+        scoreFileInput.addEventListener('change', function () {
+
+            var reader = new FileReader();
+
+            function i2hex(i) {
+                return ('0' + i.toString(16)).slice(-2);
+            }
+
+            reader.onload = function () {
+
+                var arrayBuffer = this.result,
+                    uint8 = new Uint8Array(arrayBuffer),
+                    binaryString = Array.from(uint8).map(i2hex).join('');
+
+                scoreFileBytes = '0x' + binaryString
+                requestSigning.disabled = false
+                scoreFilename.innerHTML = '> SCORE filename : <b>' + scoreFileInput.value + '</b>';
+            }
+            reader.readAsArrayBuffer(this.files[0]);
+
+        }, false);
+
+        requestSigning.onclick = function () {
+            const nid = parseInt($('input[name="nid"]:checked').val());
+            deployTransaction(nid, walletAddress, scoreFileBytes, JSON.parse(scoreParams.value)).then(txHash => {
+                if (!txHash) return;
+                var tracker = null;
+                if (nid == 1) tracker = "tracker.icon.foundation"
+                if (nid == 2) tracker = "trackerdev.icon.foundation"
+                if (nid == 3) tracker = "bicon.tracker.solidwallet.io"
+                responseDeploy.innerHTML = "> Transaction Hash : <a href='https://" + tracker + "/transaction/" + txHash.result + "'>" + txHash.result + "</a>";
+            })
+        }
+
+        function iconexAskAddress() {
+            return __iconexConnectRequest('REQUEST_ADDRESS').then(payload => {
+                return payload
+            })
+        }
+
+        function deployTransaction(nid, walletAddress, scoreFileBytes, scoreParams) {
+            const transaction = deployTransactionBuild(nid, walletAddress, scoreFileBytes, scoreParams)
+            const jsonRpcQuery = {
+                jsonrpc: '2.0',
+                method: 'icx_sendTransaction',
+                params: IconConverter.toRawTransaction(transaction),
+                id: 1234
+            }
+            return __iconexJsonRpc(jsonRpcQuery)
+        }
+
+        function __iconexJsonRpc(jsonRpcQuery) {
+            return __iconexConnectRequest('REQUEST_JSON-RPC', jsonRpcQuery).then(payload => {
+                return payload
+            })
+        }
+
+        function __iconexConnectRequest(requestType, payload) {
+            return new Promise((resolve, reject) => {
+                function eventHandler(event) {
+                    const { payload } = event.detail
+                    window.removeEventListener('ICONEX_RELAY_RESPONSE', eventHandler)
+                    resolve(payload)
+                }
+                window.addEventListener('ICONEX_RELAY_RESPONSE', eventHandler)
+
+                window.dispatchEvent(new window.CustomEvent('ICONEX_RELAY_REQUEST', {
+                    detail: {
+                        type: requestType,
+                        payload
+                    }
+                }))
+            })
+        }
+
+        function deployTransactionBuild(nid, from, scoreFileBytes, params = {}) {
+            let deployTransactionBuilder = new IconBuilder.DeployTransactionBuilder()
+                .from(from)
+                .to('cx0000000000000000000000000000000000000000')
+                .stepLimit(IconConverter.toBigNumber(3000000000))
+                .nid(IconConverter.toBigNumber(nid))
+                .nonce(IconConverter.toBigNumber(1))
+                .version(IconConverter.toBigNumber(3))
+                .timestamp((new Date()).getTime() * 1000)
+                .contentType('application/zip')
+                .content(scoreFileBytes)
+
+            // Optional "params" field
+            if (Object.keys(params).length !== 0) {
+                deployTransactionBuilder = deployTransactionBuilder.params(params)
+            }
+
+            return deployTransactionBuilder.build()
+        }
+
+    </script>
+</body>
+
+</html>
